@@ -1634,6 +1634,226 @@ dialog::backdrop { background: #2b241e66; backdrop-filter: blur(3px); }
 })();
 </script>
 
+<!-- Built-in Folio game: Recall Rush -->
+<script data-folio-game="recall-rush">
+/* Folio: Recall Rush. Load after Folio's main script. No dependencies. */
+(() => {
+  'use strict';
+  if (!window.Folio?.registerGame) throw new Error('Load recall-rush.js after Folio’s main script.');
+  const normal = text => text.trim().replace(/\s+/g, ' ').toLowerCase();
+  const shuffle = items => {
+    const result = [...items];
+    for (let i = result.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [result[i], result[j]] = [result[j], result[i]];
+    }
+    return result;
+  };
+  // Group identical prompts so synonymous answers never become distractors.
+  function questionsFor(cards, reverse) {
+    const groups = new Map(), answers = new Map();
+    for (const card of cards) {
+      const prompt = (reverse ? card.term : card.definition)?.trim();
+      const answer = (reverse ? card.definition : card.term)?.trim();
+      if (!prompt || !answer) continue;
+      const key = normal(prompt), answerKey = normal(answer);
+      if (!groups.has(key)) groups.set(key, { prompt, answers: new Map() });
+      groups.get(key).answers.set(answerKey, answer);
+      answers.set(answerKey, answer);
+    }
+    return [...groups.values()].map(group => ({
+      prompt: group.prompt,
+      correct: [...group.answers.values()],
+      wrong: [...answers].filter(([key]) => !group.answers.has(key)).map(([, text]) => text)
+    })).filter(q => q.wrong.length);
+  }
+  const styles = `
+    .rr{--rr-ink:var(--ink,#302d29);--rr-paper:var(--surface,#fffefa);--rr-line:var(--line,#dedbd3);--rr-muted:var(--muted,#6f6a62);--rr-accent:var(--accent,#a34f36);color:var(--rr-ink);font:16px/1.55 system-ui,sans-serif;max-width:850px;margin:auto}
+    .rr *{box-sizing:border-box}.rr h2,.rr h3,.rr p{margin:0}.rr h2,.rr h3{font-family:Georgia,serif;font-weight:400}.rr h2{font-size:clamp(28px,4vw,38px);line-height:1.3}.rr h3{font-size:24px}.rr button,.rr select{font:inherit;color:inherit}.rr button{cursor:pointer;min-height:44px}.rr button:disabled{cursor:default}.rr button:focus-visible,.rr select:focus-visible{outline:3px solid #a34f3680;outline-offset:3px}.rr-card{background:var(--rr-paper);border:1px solid var(--rr-line);border-radius:18px;padding:clamp(20px,4vw,38px)}.rr-label{font-size:12px;letter-spacing:.12em;color:var(--rr-muted);font-weight:650;margin-bottom:12px!important}.rr-muted{color:var(--rr-muted);font-size:14px}.rr-intro p{margin:16px 0}.rr-fields{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:28px 0}.rr-fields label{display:grid;gap:8px;font-size:14px}.rr select{width:100%;min-width:0;border:1px solid var(--rr-line);border-radius:8px;background:var(--rr-paper);padding:11px;font-size:16px}.rr-button{border:1px solid var(--rr-line);border-radius:9px;padding:10px 17px;background:var(--rr-paper)}.rr-button.rr-primary{background:var(--rr-accent);border-color:var(--rr-accent);color:white}.rr-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:24px}.rr-stats{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;margin:0 0 20px}.rr-stat{display:grid;gap:3px}.rr-stat strong{font:400 28px Georgia,serif;font-variant-numeric:tabular-nums}.rr-stat span{font-size:12px;color:var(--rr-muted)}.rr-clock{font-variant-numeric:tabular-nums}.rr-clock.rr-low{color:#a13225}.rr-progress{height:4px;width:100%;display:block;accent-color:var(--rr-accent);margin:0 0 26px;border:0}.rr-prompt{font-size:clamp(20px,3vw,28px);font-family:Georgia,serif;line-height:1.5;overflow-wrap:anywhere;margin-bottom:26px!important}.rr-options{display:grid;grid-template-columns:1fr 1fr;gap:12px}.rr-option{display:flex;text-align:left;align-items:center;gap:12px;min-width:0;border:1px solid var(--rr-line);border-radius:11px;padding:18px;background:var(--rr-paper);font-size:16px!important;overflow-wrap:anywhere}.rr-option span:last-child{min-width:0}.rr-option:hover:not(:disabled){border-color:var(--rr-accent);background:#f6eee5}.rr-key{flex:none;display:grid;place-items:center;width:25px;height:25px;border:1px solid currentColor;border-radius:5px;font-size:12px;color:var(--rr-muted)}.rr-option.rr-correct{background:#e7eee8;border-color:#578266;color:#2b5940}.rr-option.rr-wrong{background:#f9e4df;border-color:#ad554b;color:#8e3027}.rr-feedback{font-size:16px;margin-top:22px!important;overflow-wrap:anywhere}.rr-feedback[data-tone=good]{color:#2b5940}.rr-feedback[data-tone=bad]{color:#8e3027}.rr-hint{margin-top:18px!important;font-size:12px;color:var(--rr-muted)}.rr-review{margin-top:30px;border-top:1px solid var(--rr-line);padding-top:25px}.rr-review ol{list-style:none;padding:0;margin:15px 0}.rr-review li{padding:18px 0;border-bottom:1px solid var(--rr-line);overflow-wrap:anywhere}.rr-review li p{margin-top:7px;font-size:14px}.rr-review li strong{font-weight:600}.rr-summary{margin:24px 0}.rr-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}.rr-error{color:#8e3027;margin:16px 0!important}.rr [hidden]{display:none!important}
+    @media(max-width:560px){.rr-fields,.rr-options{grid-template-columns:1fr}.rr-stats{gap:12px}.rr-stat strong{font-size:24px}.rr-option{padding:15px}.rr-card{padding:20px}.rr h2{font-size:28px}}
+  `;
+  window.Folio.registerGame({
+    id: 'recall-rush',
+    title: 'Recall Rush',
+    description: 'Race the clock, build an answer streak, and revisit what you missed. Includes untimed practice.',
+    minCards: 2,
+    mount(root, { cards }) {
+      let disposed = false, phase = 'intro', mode = 'timed', reverse = false;
+      let pool = [], queue = [], current = null, options = [], history = [];
+      let score = 0, streak = 0, bestStreak = 0, remaining = 90000, deadline = 0;
+      let timer = null, practiceLimit = 0, roundSize = 0;
+      root.innerHTML = '<style>' + styles + '</style><section class="rr"><div class="rr-view"></div><p class="rr-sr" role="status" aria-live="polite" aria-atomic="true"></p></section>';
+      const panel = root.querySelector('.rr-view'), live = root.querySelector('[role=status]');
+      const find = selector => panel.querySelector(selector);
+      const say = text => { live.textContent = text; };
+      const stopTimer = () => { clearInterval(timer); timer = null; };
+      const clock = () => { const n = Math.ceil(Math.max(0, remaining) / 1000); return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`; };
+      function element(tag, className, text) {
+        const el = document.createElement(tag);
+        el.className = className;
+        if (text !== undefined) el.textContent = text;
+        return el;
+      }
+      function button(action, label, primary = false) {
+        const el = element('button', 'rr-button' + (primary ? ' rr-primary' : ''), label);
+        el.type = 'button'; el.dataset.rr = action; return el;
+      }
+      function shell() {
+        panel.replaceChildren();
+        const box = element('div', 'rr-card'); panel.append(box); return box;
+      }
+      function stats(box, summary = false) {
+        const row = element('div', 'rr-stats');
+        const correct = history.filter(h => h.correct).length;
+        const entries = summary
+          ? [['Score', score], ['Accuracy', history.length ? Math.round(correct / history.length * 100) + '%' : '—'], ['Best streak', bestStreak], ['Answered', history.length]]
+          : [['Score', score], ['Streak', streak], [mode === 'timed' ? 'Time left' : 'Question', mode === 'timed' ? clock() : `${Math.min(history.length + 1, practiceLimit)} / ${practiceLimit}`]];
+        for (const [label, value] of entries) {
+          const cell = element('div', 'rr-stat'), number = element('strong', '', String(value));
+          if (label === 'Time left') number.className = 'rr-clock';
+          cell.append(number, element('span', '', label)); row.append(cell);
+        }
+        box.append(row);
+      }
+      function intro() {
+        phase = 'intro'; stopTimer(); const box = shell(); box.classList.add('rr-intro');
+        box.append(element('p', 'rr-label', 'THINK FAST. REMEMBER MORE.'), element('h2', '', 'How much can you recall?'),
+          element('p', 'rr-muted', 'Choose the answer that belongs to each flashcard. Earn 100 points per correct answer; every three in a row increases your multiplier, up to 3×.'));
+        const fields = element('div', 'rr-fields');
+        fields.innerHTML = '<label>Round<select name="rr-mode"><option value="timed">90-second rush</option><option value="practice">Untimed practice · up to 12 questions</option></select></label><label>Answer with<select name="rr-direction"><option value="term">Terms</option><option value="definition">Definitions</option></select></label>';
+        fields.querySelector('[name=rr-mode]').value = mode;
+        fields.querySelector('[name=rr-direction]').value = reverse ? 'definition' : 'term';
+        box.append(fields, element('p', 'rr-muted', 'The clock pauses while you read feedback or switch tabs. Missed cards are collected for review.'));
+        const actions = element('div', 'rr-actions'); actions.append(button('start', 'Start round', true)); box.append(actions);
+      }
+      function begin() {
+        mode = find('[name=rr-mode]').value; reverse = find('[name=rr-direction]').value === 'definition';
+        pool = questionsFor(cards, reverse);
+        if (!pool.length) {
+          find('.rr-error')?.remove();
+          const message = 'This direction needs different answers to make a fair question. Try the other direction or add more cards.';
+          find('.rr-card').append(element('p', 'rr-error', message)); say(message); return;
+        }
+        history = []; score = streak = bestStreak = 0; remaining = 90000;
+        practiceLimit = Math.min(12, pool.length); roundSize = pool.length; queue = shuffle(pool);
+        next();
+      }
+      function next() {
+        if (mode === 'practice' && history.length >= practiceLimit) return finish('Practice complete');
+        if (mode === 'timed' && remaining <= 0) return finish('Time’s up');
+        if (!queue.length) queue = shuffle(pool);
+        current = queue.pop();
+        options = shuffle([shuffle(current.correct)[0], ...shuffle(current.wrong).slice(0, 3)]);
+        phase = 'question'; renderQuestion(); resumeClock();
+      }
+      function renderQuestion() {
+        const box = shell(); stats(box);
+        if (mode === 'timed') {
+          const bar = element('progress', 'rr-progress'); bar.max = 90000; bar.value = remaining; bar.setAttribute('aria-label', 'Time remaining'); box.append(bar);
+        }
+        box.append(element('p', 'rr-label', reverse ? 'CHOOSE THE DEFINITION' : 'CHOOSE THE TERM'));
+        const prompt = element('h2', 'rr-prompt', current.prompt); prompt.tabIndex = -1; box.append(prompt);
+        const grid = element('div', 'rr-options');
+        options.forEach((answer, index) => {
+          const choice = element('button', 'rr-option'); choice.type = 'button'; choice.dataset.rr = 'answer'; choice.dataset.index = String(index);
+          const key = element('span', 'rr-key', String(index + 1)); key.setAttribute('aria-hidden', 'true');
+          choice.append(key, element('span', '', answer)); grid.append(choice);
+        });
+        box.append(grid, element('p', 'rr-feedback'));
+        const actions = element('div', 'rr-actions'); actions.append(button('pause', 'Pause'), button('finish', 'Finish round')); box.append(actions);
+        box.append(element('p', 'rr-hint', 'Keys 1–4 choose an answer. Enter continues after feedback.'));
+        prompt.focus();
+      }
+      function updateTime() {
+        if (phase !== 'question' || mode !== 'timed') return;
+        remaining = Math.max(0, deadline - performance.now());
+        const display = find('.rr-clock'), bar = find('progress');
+        if (display) { display.textContent = clock(); display.classList.toggle('rr-low', remaining <= 10000); }
+        if (bar) bar.value = remaining;
+        if (remaining <= 0) {
+          history.push({ question: current, chosen: null, correct: false }); streak = 0;
+          finish('Time’s up');
+        }
+      }
+      function resumeClock() {
+        if (mode === 'timed') { deadline = performance.now() + remaining; stopTimer(); timer = setInterval(updateTime, 100); }
+      }
+      function answer(index) {
+        if (phase !== 'question' || !Number.isInteger(index) || !options[index]) return;
+        updateTime(); if (phase !== 'question') return;
+        stopTimer(); phase = 'feedback';
+        const chosen = options[index], correct = current.correct.some(a => normal(a) === normal(chosen));
+        history.push({ question: current, chosen, correct });
+        let earned = 0;
+        if (correct) { streak++; bestStreak = Math.max(bestStreak, streak); earned = 100 * Math.min(3, 1 + Math.floor(streak / 3)); score += earned; }
+        else streak = 0;
+        panel.querySelectorAll('.rr-option').forEach((choice, i) => {
+          choice.disabled = true;
+          if (current.correct.some(a => normal(a) === normal(options[i]))) {
+            choice.classList.add('rr-correct'); choice.append(element('span', '', '✓'));
+          } else if (i === index) { choice.classList.add('rr-wrong'); choice.append(element('span', '', '×')); }
+        });
+        const feedback = find('.rr-feedback'); feedback.dataset.tone = correct ? 'good' : 'bad';
+        feedback.textContent = correct ? `Correct! +${earned} points${earned > 100 ? ` · ${earned / 100}× streak bonus` : ''}.` : `The answer is: ${current.correct.join(' / ')}.`;
+        const numbers = panel.querySelectorAll('.rr-stat strong'); numbers[0].textContent = score; numbers[1].textContent = streak;
+        const actions = find('.rr-actions'); actions.replaceChildren(button('next', mode === 'practice' && history.length >= practiceLimit ? 'See results' : 'Next question', true), button('finish', 'Finish round'));
+        say(feedback.textContent); actions.firstChild.focus();
+      }
+      function pause() {
+        if (phase !== 'question') return;
+        updateTime(); if (phase !== 'question') return;
+        stopTimer(); phase = 'paused'; const box = shell();
+        box.append(element('p', 'rr-label', 'TAKE YOUR TIME'), element('h2', '', 'Round paused'), element('p', 'rr-muted', 'Your question, score, and remaining time are saved for this round.'));
+        const actions = element('div', 'rr-actions'); actions.append(button('resume', 'Resume', true), button('finish', 'Finish round')); box.append(actions); actions.firstChild.focus(); say('Round paused.');
+      }
+      function finish(title) {
+        stopTimer(); phase = 'results'; const box = shell();
+        box.append(element('p', 'rr-label', 'ROUND COMPLETE'), element('h2', '', title));
+        const summary = element('div', 'rr-summary'); stats(summary, true); box.append(summary);
+        box.append(element('p', 'rr-muted', `${roundSize} playable prompts in this direction. Game scores do not change your deck’s Known status.`));
+        const actions = element('div', 'rr-actions'); actions.append(button('again', 'Play again', true)); box.append(actions);
+        const misses = history.filter(h => !h.correct);
+        const review = element('section', 'rr-review'); review.append(element('h3', '', misses.length ? 'Give these another look' : history.length ? 'A clean round.' : 'Ready when you are.'));
+        const list = element('ol', ''), seen = new Set();
+        for (const missed of misses) {
+          const key = normal(missed.question.prompt); if (seen.has(key)) continue; seen.add(key);
+          const item = element('li', ''); item.append(element('strong', '', missed.question.prompt), element('p', '', `Answer: ${missed.question.correct.join(' / ')}`), element('p', 'rr-muted', missed.chosen === null ? 'Time ran out before an answer.' : `Your answer: ${missed.chosen}`)); list.append(item);
+        }
+        review.append(list); box.append(review); actions.firstChild.focus(); say(`${title}. Score ${score}. ${misses.length} missed questions.`);
+      }
+      function click(event) {
+        const target = event.target.closest('[data-rr]'); if (!target || !panel.contains(target) || target.disabled || disposed) return;
+        const action = target.dataset.rr;
+        if (action === 'start' && phase === 'intro') begin();
+        else if (action === 'answer') answer(Number(target.dataset.index));
+        else if (action === 'next' && phase === 'feedback') next();
+        else if (action === 'pause') pause();
+        else if (action === 'resume' && phase === 'paused') { phase = 'question'; renderQuestion(); resumeClock(); }
+        else if (action === 'finish' && ['question', 'feedback', 'paused'].includes(phase)) {
+          updateTime(); if (phase !== 'results') finish('Round finished');
+        }
+        else if (action === 'again' && phase === 'results') intro();
+      }
+      function keydown(event) {
+        if (disposed || event.ctrlKey || event.altKey || event.metaKey || event.repeat || event.target.closest('input,textarea,select,[contenteditable=true],dialog[open]')) return;
+        if (/^[1-4]$/.test(event.key) && phase === 'question') { event.preventDefault(); answer(Number(event.key) - 1); }
+        else if (event.key === 'Enter' && ['feedback', 'paused'].includes(phase)) {
+          const action = phase === 'feedback' ? 'next' : 'resume';
+          // Let native buttons retain their own Enter behavior.
+          if (event.target.closest('button')) return;
+          event.preventDefault(); find(`[data-rr=${action}]`)?.click();
+        }
+      }
+      function visibility() { if (document.hidden) pause(); }
+      root.addEventListener('click', click); document.addEventListener('keydown', keydown); document.addEventListener('visibilitychange', visibility);
+      intro();
+      return () => { disposed = true; stopTimer(); root.removeEventListener('click', click); document.removeEventListener('keydown', keydown); document.removeEventListener('visibilitychange', visibility); };
+    }
+  });
+})();
+
+</script>
+
 <!--
 Add future minigame scripts here, after the main script.
 
