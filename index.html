@@ -2041,6 +2041,88 @@ dialog::backdrop { background: #2b241e66; backdrop-filter: blur(3px); }
 })();
 </script>
 
+<script>
+(() => {
+  'use strict';
+  const norm = s => String(s || '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
+  function prepare(cards) {
+    const groups = new Map();
+    for (const c of cards) {
+      if (!norm(c.term) || !norm(c.definition)) continue;
+      const key = norm(c.term);
+      if (!groups.has(key)) groups.set(key, new Map());
+      groups.get(key).set(norm(c.definition), c);
+    }
+    return [...groups.values()].filter(g => g.size === 1).map(g => [...g.values()][0]);
+  }
+  window.Folio.registerGame({
+    id: 'signal-check', title: 'Signal Check', minCards: 2, prepare,
+    description: 'Spot true and scrambled pairs. Wager on your confidence, build a streak, and review every miss.',
+    mount(root, { cards, esc, shuffle }) {
+      let rounds = [], index = 0, score = 0, streak = 0, wager = 1, history = [], locked = false;
+      const css = `<style>
+        .sc{max-width:820px;margin:auto}.sc-box{background:var(--surface,#fffefa);border:1px solid var(--line,#dedbd3);border-radius:18px;padding:clamp(20px,4vw,36px)}
+        .sc h2{font:400 clamp(26px,4vw,38px)/1.3 Georgia,serif}.sc p,.sc h2{overflow-wrap:anywhere}.sc-stats,.sc-actions{display:flex;gap:12px;flex-wrap:wrap;align-items:center}.sc-stats{justify-content:space-between;margin:16px 0}.sc-stats strong{font-size:22px}.sc-label{font-size:12px;letter-spacing:.12em;color:var(--muted,#6f6a62)}.sc-pair{padding:24px 0;border-block:1px solid var(--line,#dedbd3);margin:24px 0}.sc-definition{font:22px/1.6 Georgia,serif}.sc button{min-height:44px}.sc button[aria-pressed=true]{background:var(--accent,#a34f36);color:white}.sc-feedback{padding:18px;border-radius:10px;background:#ede9e1;margin-top:20px}.sc progress{width:100%;accent-color:var(--accent,#a34f36)}.sc-review{padding:16px 0;border-bottom:1px solid var(--line,#dedbd3)}.sc fieldset{border:0;padding:0;margin:18px 0}.sc legend{margin-bottom:10px}.sc .sc-primary{background:var(--accent,#a34f36);color:white}.sc button:focus-visible{outline:3px solid #a34f36;outline-offset:3px}.sc-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+      </style>`;
+      root.innerHTML = css + '<section class="sc"><div class="sc-panel"></div><div class="sc-sr" role="status" aria-live="polite" aria-atomic="true"></div></section>';
+      const panel = root.querySelector('.sc-panel'), live = root.querySelector('[role=status]');
+      const btn = (action, text, extra = '') => `<button type="button" data-sc="${action}" ${extra}>${text}</button>`;
+      function intro() {
+        panel.innerHTML = `<div class="sc-box"><span class="sc-label">TRUST YOUR RECALL</span><h2>Does this pair belong together?</h2><p>Some definitions belong to their terms. Others were borrowed from another card in your deck. Inspect the pair, choose a wager, then call it.</p><p>Correct: earn your wager × 100, plus a streak bonus of up to 100. Wrong: lose your wager × 50 and reset your streak. Your score can go below zero.</p><p>Up to 12 rounds. No timer. Every answer includes the original definition.</p>${btn('start', 'Start checking', 'class="sc-primary"')}</div>`;
+      }
+      function start() {
+        index = score = streak = 0; history = [];
+        rounds = shuffle(cards).slice(0, 12).map(card => {
+          const alternatives = cards.filter(c => norm(c.definition) !== norm(card.definition));
+          const matches = !alternatives.length || Math.random() < .5;
+          return { card, matches, shown: matches ? card.definition : shuffle(alternatives)[0].definition };
+        });
+        question();
+      }
+      function question() {
+        if (index >= rounds.length) return results();
+        locked = false; wager = 1;
+        const r = rounds[index];
+        panel.innerHTML = `<div class="sc-stats"><span>Round <strong>${index + 1}/${rounds.length}</strong></span><span>Score <strong>${score}</strong></span><span>Streak <strong>${streak}</strong></span></div><progress value="${index}" max="${rounds.length}" aria-label="Rounds completed"></progress><div class="sc-box"><span class="sc-label">INSPECT THE PAIR</span><div class="sc-pair"><h2>${esc(r.card.term)}</h2><p class="sc-definition">${esc(r.shown)}</p></div><fieldset><legend>How confident are you?</legend><div class="sc-actions">${[1,2,3].map(n => btn('wager', `${n} point${n > 1 ? 's' : ''}`, `data-value="${n}" aria-pressed="${n === 1}"`)).join('')}</div></fieldset><div class="sc-actions">${btn('yes', 'Matches', 'class="sc-primary"')}${btn('no', 'Doesn’t match')}</div><div class="sc-answer"></div></div>`;
+        panel.querySelector('[data-sc=wager]').focus();
+      }
+      function answer(value) {
+        if (locked) return;
+        locked = true;
+        const r = rounds[index], correct = value === r.matches;
+        const delta = correct ? wager * 100 + Math.min(streak, 4) * 25 : -wager * 50;
+        score += delta; streak = correct ? streak + 1 : 0;
+        history.push({ ...r, correct, wager, delta });
+        panel.querySelectorAll('button').forEach(b => b.disabled = true);
+        const verdict = `${correct ? 'Correct' : 'Not quite'} · ${delta > 0 ? '+' : ''}${delta} points`;
+        panel.querySelector('.sc-answer').innerHTML = `<div class="sc-feedback"><strong>${verdict}</strong><p>${r.matches ? 'This was the original pair.' : 'This definition came from a different card.'}</p><p><strong>${esc(r.card.term)}</strong> — ${esc(r.card.definition)}</p></div><div class="sc-actions">${btn('next', index + 1 === rounds.length ? 'See results' : 'Next pair', 'class="sc-primary"')}</div>`;
+        live.textContent = `${verdict}. ${r.card.term}: ${r.card.definition}`;
+        panel.querySelector('[data-sc=next]').focus();
+      }
+      function results() {
+        const misses = history.filter(r => !r.correct);
+        panel.innerHTML = `<div class="sc-box"><span class="sc-label">SIGNAL CHECK COMPLETE</span><h2>${score} points</h2><p>${history.length - misses.length} of ${history.length} pairs judged correctly.</p><h3>${misses.length ? 'Pairs to revisit' : 'Every pair checked correctly'}</h3>${misses.map(r => `<div class="sc-review"><strong>${esc(r.card.term)}</strong><p>${esc(r.card.definition)}</p><small>Wager: ${r.wager} · ${r.delta} points</small></div>`).join('')}<div class="sc-actions">${btn('start','Play again','class="sc-primary"')}</div></div>`;
+        live.textContent = `Finished with ${score} points. ${history.length - misses.length} of ${history.length} correct.`;
+        panel.querySelector('button').focus();
+      }
+      function click(event) {
+        const b = event.target.closest('[data-sc]');
+        if (!b || !panel.contains(b) || b.disabled) return;
+        if (b.dataset.sc === 'start') start();
+        else if (b.dataset.sc === 'wager' && !locked) {
+          wager = Number(b.dataset.value);
+          panel.querySelectorAll('[data-sc=wager]').forEach(e => e.setAttribute('aria-pressed', String(Number(e.dataset.value) === wager)));
+        } else if (b.dataset.sc === 'yes') answer(true);
+        else if (b.dataset.sc === 'no') answer(false);
+        else if (b.dataset.sc === 'next' && locked) { index++; question(); }
+      }
+      root.addEventListener('click', click); intro();
+      return () => root.removeEventListener('click', click);
+    }
+  });
+})();
+</script>
+
 <!--
 Add future minigame scripts here, after the main script.
 
