@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#f8f7f3">
 <meta name="description" content="Import flashcards, study your decks, and practice with games.">
-<title>Folio — Flashcards</title>
 <link rel="icon" type="image/png" href="./icon.png">
+<title>Folio — Flashcards</title>
 <style>
 :root {
   color-scheme: light;
@@ -2220,6 +2220,114 @@ dialog::backdrop { background: #2b241e66; backdrop-filter: blur(3px); }
 })();
 </script>
 
+<script>
+// Pair Repair: reconstruct shuffled front/back associations by swapping panels.
+(() => {
+  'use strict';
+  const key = s => String(s || '').normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase();
+  function prepare(cards) {
+    // Distinct fronts and backs make each board solvable without ambiguous pairings.
+    const fronts = new Set(), backs = new Set(), result = [];
+    for (const card of cards) {
+      const front = key(card.term), back = key(card.definition);
+      if (!front || !back || fronts.has(front) || backs.has(back)) continue;
+      fronts.add(front); backs.add(back); result.push(card);
+    }
+    return result;
+  }
+  const css = `<style>
+    .pr{max-width:1000px;margin:auto;--pr-green:#3f6552;--pr-soft:#edf2ea}.pr p{margin:12px 0}.pr h2{font:400 clamp(25px,4vw,36px)/1.35 Georgia,serif}.pr-box{padding:clamp(20px,4vw,32px);background:var(--surface,#fffefa);border:1px solid var(--line,#dedbd3);border-radius:18px}.pr-label{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted,#6f6a62)}.pr-stats{display:flex;gap:12px;justify-content:space-between;flex-wrap:wrap;margin:18px 0;font-size:14px}.pr-stats strong{font-weight:500;font-size:22px}.pr-board{list-style:none;padding:0;margin:20px 0;display:grid;gap:14px}.pr-row{border:1px solid var(--line,#dedbd3);border-radius:14px;padding:16px;background:var(--surface,#fffefa)}.pr-row[data-locked=true]{border-color:var(--pr-green);background:var(--pr-soft)}.pr-row-header{display:flex;justify-content:space-between;gap:12px;margin-bottom:12px;font-size:12px;color:var(--muted,#6f6a62)}.pr-columns{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}.pr-text{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6;text-align:left;min-width:0}.pr-front{padding:12px 4px;font-size:17px}.pr button{min-height:44px;border:1px solid var(--line,#dedbd3);background:var(--surface,#fffefa);border-radius:9px;padding:11px 15px}.pr button.pr-answer{width:100%;height:100%;text-align:left;display:grid;gap:10px;min-width:0;font-size:16px}.pr button.pr-answer[aria-pressed=true]{outline:3px solid var(--accent,#a34f36);outline-offset:2px;background:var(--soft,#f5e8df)}.pr .pr-locked{opacity:1;color:var(--pr-green);border-color:var(--pr-green);cursor:default}.pr .pr-primary{background:var(--pr-green);border-color:var(--pr-green);color:white}.pr button:hover:not(:disabled){border-color:var(--pr-green)}.pr button:focus-visible{outline:3px solid var(--accent,#a34f36);outline-offset:3px}.pr-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}.pr-feedback{margin:16px 0;padding:16px;border-radius:10px;background:var(--soft,#f5e8df);overflow-wrap:anywhere}.pr-help{font-size:13px;color:var(--muted,#6f6a62)}.pr progress{width:100%;accent-color:var(--pr-green)}.pr-review{padding:18px 0;border-top:1px solid var(--line,#dedbd3)}.pr-review p{white-space:pre-wrap;overflow-wrap:anywhere}.pr-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}@media(max-width:620px){.pr-columns{grid-template-columns:minmax(0,1fr);gap:8px}.pr-row{padding:14px}.pr-front{padding:4px}.pr-stats{gap:10px}.pr-stats strong{font-size:19px}}
+  </style>`;
+  window.Folio.registerGame({
+    id:'pair-repair', title:'Pair Repair', minCards:2, prepare,
+    description:'Repair scrambled cards by swapping their backs. Lock correct pairs and use a hint when you need a hand. Full text, no timer.',
+    mount(root, { cards, esc, shuffle }) {
+      let board = [], order = [], locked = new Set(), selected = null, previous = null;
+      let moves = 0, hints = 0, checks = 0, phase = 'intro', disposed = false;
+      const assisted = new Set();
+      root.innerHTML = css + '<section class="pr"><div class="pr-panel"></div><div class="pr-sr" role="status" aria-live="polite" aria-atomic="true"></div></section>';
+      const panel = root.querySelector('.pr-panel'), live = root.querySelector('[role=status]');
+      const button = (action,text,attrs='') => `<button type="button" data-pr="${action}" ${attrs}>${text}</button>`;
+      const focus = selector => panel.querySelector(selector)?.focus();
+      const say = message => { live.textContent = message; };
+      const score = () => Math.max(0, board.length * 100 - moves * 5 - hints * 30 - checks * 15);
+      function intro() {
+        panel.innerHTML = `<div class="pr-box"><span class="pr-label">A small mix-up in the archive</span><h2>Right fronts. Wrong backs.</h2><p>The backs of up to five cards have been shuffled. Select two back panels to swap them. Arrange every front with its original back, then check your pairs.</p><p>Correct pairs lock in place. You can undo the last swap or use a hint to repair and lock one pair.</p><p class="pr-help">Start with 100 points per pair. Each swap costs 5, each hint costs 30, and each check with wrong pairs remaining costs 15. The score never goes below zero. No timer.</p><p class="pr-help">Uses cards with distinct fronts and backs from your selected deck. Long text stays readable, and all controls work with mouse, touch, or Tab and Enter.</p><div class="pr-actions">${button('start','Shuffle the archive','class="pr-primary"')}</div></div>`;
+      }
+      function start() {
+        board = shuffle(cards).slice(0,5); locked = new Set(); assisted.clear();
+        selected = previous = null; moves = hints = checks = 0; phase = 'play';
+        order = shuffle(board.map((_,i) => i));
+        if (order.some((id,i) => id === i)) {
+          const offset = 1 + Math.floor(Math.random() * (board.length - 1));
+          order = board.map((_,i) => (i + offset) % board.length);
+        }
+        render('Choose any two back panels to swap them.'); focus('[data-pr=pick]');
+      }
+      function render(message = '') {
+        panel.innerHTML = `<div class="pr-stats"><span>Locked <strong>${locked.size}/${board.length}</strong></span><span>Swaps <strong>${moves}</strong></span><span>Hints <strong>${hints}</strong></span><span>Score <strong>${score()}</strong></span></div><progress value="${locked.size}" max="${board.length}" aria-label="Pairs locked"></progress>${message ? `<div class="pr-feedback">${esc(message)}</div>` : ''}<ol class="pr-board">${board.map((card,i) => `<li class="pr-row" data-locked="${locked.has(i)}"><div class="pr-row-header"><span>PAIR ${i + 1}</span><span>${locked.has(i) ? '✓ Locked' : selected === i ? 'Selected—choose another back' : 'Needs checking'}</span></div><div class="pr-columns"><div class="pr-front"><span class="pr-label">Front</span><p class="pr-text">${esc(card.term)}</p></div>${button('pick',`<span class="pr-label">${locked.has(i) ? 'Original back' : 'Current back'}</span><span class="pr-text">${esc(board[order[i]].definition)}</span>`,`class="pr-answer ${locked.has(i) ? 'pr-locked' : ''}" data-row="${i}" aria-pressed="${selected === i}" ${locked.has(i) ? 'disabled' : ''}`)}</div></li>`).join('')}</ol><div class="pr-actions">${button('check','Check pairs','class="pr-primary"')}${button('undo','Undo last swap',previous ? '' : 'disabled')}${button('hint','Repair one pair')}${button('finish','Reveal all & finish')}</div><p class="pr-help">Selecting a panel twice cancels the selection. Undo returns the last swap and its 5 points; checking or using a hint clears undo.</p>`;
+      }
+      function pick(row) {
+        if (!Number.isInteger(row) || row < 0 || row >= board.length || locked.has(row)) return;
+        if (selected === null) { selected = row; render(`Back ${row + 1} selected. Choose another back panel.`); focus(`[data-pr=pick][data-row="${row}"]`); }
+        else if (selected === row) { selected = null; render('Selection cancelled.'); focus(`[data-pr=pick][data-row="${row}"]`); }
+        else {
+          const first = selected; previous = [first,row];
+          [order[first],order[row]] = [order[row],order[first]]; moves++; selected = null;
+          const message = `Swapped backs ${first + 1} and ${row + 1}. Check pairs when you are ready.`;
+          render(message); say(message); focus(`[data-pr=pick][data-row="${row}"]`);
+        }
+      }
+      function check() {
+        selected = previous = null;
+        const before = locked.size;
+        order.forEach((id,i) => { if(id === i) locked.add(i); });
+        if (locked.size === board.length) return results(false);
+        checks++;
+        const message = `${locked.size - before} new pairs locked. ${board.length - locked.size} still need repair. −15 points.`;
+        render(message); say(message); focus('[data-pr=pick]:not(:disabled)');
+      }
+      function hint() {
+        selected = previous = null; hints++;
+        let row = order.findIndex((id,i) => id !== i && !locked.has(i));
+        // If all remaining pairs are already correct, simply confirm one of them.
+        if (row < 0) row = board.findIndex((_,i) => !locked.has(i));
+        const other = order.indexOf(row);
+        [order[row],order[other]] = [order[other],order[row]];
+        locked.add(row); assisted.add(row);
+        if (locked.size === board.length) return results(false);
+        const message = `Pair ${row + 1} repaired and locked. Read its original back before continuing. −30 points.`;
+        render(message); say(message); focus('[data-pr=pick]:not(:disabled)');
+      }
+      function results(revealed) {
+        phase = 'results'; selected = previous = null;
+        const unresolved = board.filter((_,i) => !locked.has(i)).length;
+        panel.innerHTML = `<div class="pr-box"><span class="pr-label">${revealed ? 'Archive opened' : 'Archive restored'}</span><h2>${revealed ? `${locked.size}/${board.length} pairs locked` : 'Every pair in its place'}</h2><p>${score()} points · ${moves} swaps · ${hints} hints · ${checks} checks with mismatches</p>${revealed ? `<p class="pr-help">${unresolved} unlocked pairs revealed below. This board is not counted as completed.</p>` : '<p>Here are the original pairs for one last review.</p>'}${board.map((card,i) => `<div class="pr-review"><span class="pr-label">Pair ${i + 1}${assisted.has(i) ? ' · Repaired with a hint' : revealed && !locked.has(i) ? ' · Revealed' : ''}</span><p><strong>Front</strong><br>${esc(card.term)}</p><p><strong>Back</strong><br>${esc(card.definition)}</p></div>`).join('')}<div class="pr-actions">${button('start','New puzzle','class="pr-primary"')}</div></div>`;
+        say(`${revealed ? 'Answers revealed' : 'Puzzle complete'}. ${score()} points.`); focus('[data-pr=start]');
+      }
+      function click(event) {
+        if (disposed) return;
+        const target = event.target.closest('[data-pr]');
+        if (!target || !panel.contains(target) || target.disabled) return;
+        const action = target.dataset.pr;
+        if (action === 'start' && ['intro','results'].includes(phase)) return start();
+        if (phase !== 'play') return;
+        if (action === 'pick') pick(Number(target.dataset.row));
+        else if (action === 'check') check();
+        else if (action === 'hint') hint();
+        else if (action === 'finish') results(true);
+        else if (action === 'undo' && previous) {
+          const [a,b] = previous; [order[a],order[b]] = [order[b],order[a]];
+          moves--; previous = selected = null; render('Last swap undone. Five points returned.'); say('Last swap undone.'); focus('[data-pr=pick]:not(:disabled)');
+        }
+      }
+      root.addEventListener('click', click); intro();
+      return () => { disposed = true; root.removeEventListener('click', click); };
+    }
+  });
+})();
+</script>
+
 <!--
 Add future minigame scripts here, after the main script.
 
@@ -2240,7 +2348,5 @@ Folio.registerGame({
 For example:
 <script src="games/your-game.js"></script>
 -->
-</body>
-</html>
 </body>
 </html>
