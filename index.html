@@ -2124,6 +2124,102 @@ dialog::backdrop { background: #2b241e66; backdrop-filter: blur(3px); }
 })();
 </script>
 
+<script>
+// Recall Route: flexible self-assessed recall for any two-sided text card.
+(() => {
+  'use strict';
+  const prepare = cards => cards.filter(c => typeof c.term === 'string' && c.term.trim() && typeof c.definition === 'string' && c.definition.trim());
+  const css = `<style>
+    .route{max-width:900px;margin:auto;--route-green:#3f6552;--route-soft:#edf2ea}.route-box{padding:clamp(20px,4vw,36px);border:1px solid var(--line,#dedbd3);border-radius:18px;background:var(--surface,#fffefa)}.route h2{font:400 clamp(25px,4vw,36px)/1.35 Georgia,serif}.route p{margin:12px 0}.route-label{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted,#6f6a62)}.route-map{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:24px 0;padding:0;list-style:none}.route-stop{border:1px solid var(--line,#dedbd3);border-radius:12px;padding:12px 8px;text-align:center;font-size:12px;display:grid;gap:7px;justify-items:center}.route-stop strong{display:grid;place-items:center;width:32px;height:32px;border-radius:50%;background:var(--bg,#f8f7f3);font-size:16px;font-weight:500}.route-stop[data-state=cleared]{background:var(--route-soft);border-color:var(--route-green);color:var(--route-green)}.route-stop[data-state=current]{border:2px solid var(--accent,#a34f36)}.route-stop[data-state=review]{background:var(--soft,#f5e8df)}.route-stats{display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;margin:18px 0;font-size:14px}.route-stats strong{font-size:20px;font-weight:500}.route-copy{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65;font-size:clamp(17px,2.2vw,22px);margin:14px 0 22px!important}.route-answer{padding-top:22px;border-top:1px solid var(--line,#dedbd3);margin-top:20px}.route textarea{display:block;width:100%;min-height:100px;resize:vertical;box-sizing:border-box;border:1px solid var(--line,#dedbd3);border-radius:10px;padding:12px;background:var(--bg,#f8f7f3);color:inherit;font:inherit;margin-top:8px}.route label,.route legend{font-size:14px}.route-actions{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}.route button{min-height:44px;border:1px solid var(--line,#dedbd3);border-radius:9px;background:var(--surface,#fffefa);padding:11px 16px}.route button.route-primary{color:white;background:var(--route-green);border-color:var(--route-green)}.route button[aria-pressed=true]{border-color:var(--route-green);background:var(--route-soft);color:var(--route-green)}.route button:focus-visible,.route textarea:focus-visible{outline:3px solid var(--route-green);outline-offset:3px}.route fieldset{border:0;padding:0;margin-top:20px}.route fieldset .route-actions{margin-top:10px}.route-help{font-size:13px;color:var(--muted,#6f6a62)}.route-feedback{background:var(--route-soft);padding:18px;border-radius:12px;margin-top:20px}.route-review{padding:18px 0;border-top:1px solid var(--line,#dedbd3);overflow-wrap:anywhere}.route-review p{white-space:pre-wrap}.route-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}@media(max-width:440px){.route-map{gap:6px}.route-stop{padding:10px 3px;font-size:11px}}
+  </style>`;
+  window.Folio.registerGame({
+    id: 'recall-route', title: 'Recall Route', minCards: 1, prepare,
+    description: 'Travel through your deck by recalling either side. Reveal, compare in your own words, and revisit the cards that need practice.',
+    mount(root, { cards, esc, shuffle }) {
+      let items = [], queue = [], current = null, mode = 'front', phase = 'intro';
+      let score = 0, answers = 0, history = [], disposed = false;
+      root.innerHTML = css + '<section class="route"><div class="route-panel"></div><div class="route-sr" role="status" aria-live="polite" aria-atomic="true"></div></section>';
+      const panel = root.querySelector('.route-panel'), live = root.querySelector('[role=status]');
+      const button = (action, text, attrs = '') => `<button type="button" data-route="${action}" ${attrs}>${text}</button>`;
+      const focus = s => panel.querySelector(s)?.focus();
+      const say = text => { live.textContent = text; };
+      function map() {
+        return `<ol class="route-map" aria-label="Route checkpoints">${items.map((item, i) => {
+          const state = item.cleared ? 'cleared' : current === item && ['question','revealed'].includes(phase) ? 'current' : item.tries ? 'review' : 'waiting';
+          const label = { cleared: 'Cleared', current: 'Here', review: 'Revisit', waiting: 'Ahead' }[state];
+          return `<li class="route-stop" data-state="${state}" ${state === 'current' ? 'aria-current="step"' : ''}><strong>${i + 1}</strong><span>${label}</span></li>`;
+        }).join('')}</ol>`;
+      }
+      function stats() {
+        return `<div class="route-stats"><span>Checkpoints <strong>${items.filter(i => i.cleared).length}/${items.length}</strong></span><span>Score <strong>${score}</strong></span><span>Attempts <strong>${answers}</strong></span></div>`;
+      }
+      function intro() {
+        panel.innerHTML = `<div class="route-box"><span class="route-label">Small steps. Stronger recall.</span><h2>Take your cards on a journey.</h2><p>Recall the other side of each card, reveal it, and decide how well you remembered. Think it, say it, or jot it down—your answer can be in your own words.</p><p>“Got it” clears a checkpoint for 100 points. “Almost” earns 25 points and returns later. “Try again” returns without points. Each card gets at most three attempts per route, so a route always ends.</p><p class="route-help">Up to eight cards. No timer or exact-text matching. Scores reflect your own ratings. This round does not change your deck’s Known marks.</p><fieldset><legend>Which side should appear first?</legend><div class="route-actions">${[['front','Front → back'],['back','Back → front'],['mix','Mix directions']].map(([value,label]) => button('mode',label,`data-mode="${value}" aria-pressed="${mode === value}"`)).join('')}</div></fieldset><div class="route-actions">${button('start','Begin route','class="route-primary"')}</div></div>`;
+      }
+      function start(source = cards) {
+        items = shuffle(source).slice(0,8).map((card, index) => ({ card, index, tries:0, cleared:false, reverse: mode === 'back' || (mode === 'mix' && Math.random() < .5) }));
+        queue = [...items]; score = answers = 0; history = []; next();
+      }
+      function next() {
+        current = queue.shift();
+        if (!current) return results();
+        phase = 'question';
+        const prompt = current.reverse ? current.card.definition : current.card.term;
+        panel.innerHTML = `${stats()}<div class="route-box">${map()}<span class="route-label">Checkpoint ${current.index + 1} · Attempt ${current.tries + 1}/3 · ${current.reverse ? 'Back' : 'Front'}</span><p class="route-copy">${esc(prompt)}</p><label for="route-notes">Your recall (optional)<textarea id="route-notes" placeholder="Write a short answer, key points, or nothing at all…"></textarea></label><div class="route-actions">${button('reveal','Reveal other side','class="route-primary"')}${button('finish','End route')}</div><div class="route-reveal"></div></div>`;
+        say(`Checkpoint ${current.index + 1}. Attempt ${current.tries + 1} of 3.`); focus('[data-route=reveal]');
+      }
+      function reveal() {
+        if (phase !== 'question') return;
+        phase = 'revealed';
+        panel.querySelector('[data-route=reveal]').disabled = true;
+        const answer = current.reverse ? current.card.term : current.card.definition;
+        panel.querySelector('.route-reveal').innerHTML = `<div class="route-answer"><span class="route-label">${current.reverse ? 'Front' : 'Back'} · Compare your recall</span><p class="route-copy">${esc(answer)}</p><p class="route-help">Did you remember the important meaning or steps? Your wording does not need to be identical.</p><div class="route-actions">${button('rate','Got it · +100','data-rating="got" class="route-primary"')}${button('rate','Almost · +25','data-rating="almost"')}${button('rate','Try again','data-rating="again"')}</div></div>`;
+        say('Other side revealed. Compare your recall and choose a rating.'); focus('[data-route=rate]');
+      }
+      function rate(rating) {
+        if (phase !== 'revealed' || !['got','almost','again'].includes(rating)) return;
+        phase = 'feedback'; current.tries++; answers++;
+        const earned = rating === 'got' ? 100 : rating === 'almost' ? 25 : 0;
+        current.cleared = rating === 'got'; score += earned;
+        const returns = !current.cleared && current.tries < 3;
+        if (returns) queue.push(current);
+        history.push({ index: current.index, rating, earned });
+        const message = current.cleared ? 'Checkpoint cleared.' : returns ? (queue.length === 1 ? 'This is the last card waiting. Try recalling it once more.' : 'This card will return after the other waiting cards.') : 'Three attempts complete. This card goes into your review list.';
+        panel.querySelectorAll('[data-route=rate]').forEach(b => b.disabled = true);
+        panel.querySelector('.route-reveal').insertAdjacentHTML('beforeend', `<div class="route-feedback"><strong>${esc(message)}</strong><p>${earned ? `+${earned} points. ` : ''}${items.filter(i => i.cleared).length} of ${items.length} checkpoints cleared.</p>${button('next',queue.length ? 'Continue route' : 'See results','class="route-primary"')}</div>`);
+        // Update only status regions so the prompt, answer, and personal notes stay visible.
+        panel.querySelector('.route-stats').outerHTML = stats(); panel.querySelector('.route-map').outerHTML = map();
+        say(`${message} ${earned} points.`); focus('[data-route=next]');
+      }
+      function results(early = false) {
+        phase = 'results'; current = null;
+        const review = items.filter(i => !i.cleared), cleared = items.length - review.length;
+        panel.innerHTML = `<div class="route-box"><span class="route-label">${early ? 'Route ended' : review.length ? 'Practice complete' : 'Destination reached'}</span><h2>${cleared} checkpoints cleared · ${score} points</h2>${map()}<p>${answers} self-rated attempts. ${review.length ? `${review.length} cards are ready for another visit.` : 'You rated every card as recalled.'}</p>${review.map(i => `<div class="route-review"><span class="route-label">Checkpoint ${i.index + 1} · ${i.tries ? `${i.tries} attempts` : 'Not rated yet'}</span><p><strong>Front</strong><br>${esc(i.card.term)}</p><p><strong>Back</strong><br>${esc(i.card.definition)}</p></div>`).join('')}<div class="route-actions">${review.length ? button('retry','Retry these cards','class="route-primary"') : ''}${button('start','New route')}${button('settings','Change direction')}</div></div>`;
+        say(`Route ended. ${cleared} of ${items.length} checkpoints cleared. ${score} points.`); focus('.route-actions button');
+      }
+      function click(event) {
+        if (disposed) return;
+        const target = event.target.closest('[data-route]');
+        if (!target || !panel.contains(target) || target.disabled) return;
+        const action = target.dataset.route;
+        if (action === 'mode' && phase === 'intro' && ['front','back','mix'].includes(target.dataset.mode)) {
+          mode = target.dataset.mode;
+          panel.querySelectorAll('[data-route=mode]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === mode)));
+        } else if (action === 'start' && ['intro','results'].includes(phase)) start();
+        else if (action === 'reveal') reveal();
+        else if (action === 'rate') rate(target.dataset.rating);
+        else if (action === 'next' && phase === 'feedback') next();
+        else if (action === 'finish' && ['question','revealed','feedback'].includes(phase)) results(true);
+        else if (action === 'retry' && phase === 'results') start(items.filter(i => !i.cleared).map(i => i.card));
+        else if (action === 'settings' && phase === 'results') { phase = 'intro'; intro(); focus('[data-route=mode]'); }
+      }
+      root.addEventListener('click', click); intro();
+      return () => { disposed = true; root.removeEventListener('click', click); };
+    }
+  });
+})();
+</script>
+
 <!--
 Add future minigame scripts here, after the main script.
 
@@ -2144,5 +2240,7 @@ Folio.registerGame({
 For example:
 <script src="games/your-game.js"></script>
 -->
+</body>
+</html>
 </body>
 </html>
